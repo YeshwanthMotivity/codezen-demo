@@ -1,90 +1,114 @@
-# from language_detector import process_file
-# # from demcus import separate_music
-# import os
-# # from deepfake_detector import detect_deepfake
-
-# def main(file_path):
-#     # Step 1: Detect & segregate language
-#     process_file(file_path)
-
-#     # # Step 2: Separate BGM & Lyrics if video
-    
-#     # Create an output folder
-#     output_dir = os.path.join(os.getcwd(), "separated_files")
-#     os.makedirs(output_dir, exist_ok=True)
-
-#     # # Call music separation with file path and output dir
-#     # separate_music(file_path, output_dir)
-
-#     # # Step 3: Detect AI vs Real
-#     # detect_deepfake(file_path)
-
-# if __name__ == "__main__":
-#     file_path = r"C:\Users\Yeshwanth\Documents\songs\ORQUESTRA MALDITA (BRAZILIAN PHONK).mp3"
-#     main(file_path)
-
-
-# main.py
-
-# main.py
-
-from language_detector import process_file # process_file is the core function
+import argparse
 import os
-# from demcus import separate_music
-# from deepfake_detector import detect_deepfake
+import logging
+from .language_detector import LanguageDetector
 
-def main(folder_path):
+# Configure logging for the main application
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Define supported media file extensions (should align with LanguageDetector's capabilities)
+SUPPORTED_MEDIA_EXTENSIONS = {'.mp4', '.mkv', '.avi', '.mov', '.flv', '.webm'}
+
+def _process_single_file(file_path: str, detector: LanguageDetector):
     """
-    Iterates through all media files in the given folder and processes them 
-    one by one using the language detection and segregation logic.
+    Processes a single media file using the provided LanguageDetector.
     """
-    # Check if the path is a valid directory
-    if not os.path.isdir(folder_path):
-        print(f"Error: Path is not a valid folder: {folder_path}")
-        return
-
-    print(f"\n--- Starting batch processing in: {folder_path} ---")
-
-    # List of media extensions to process
-    media_extensions = ('.mp3', '.mp4', '.mkv', '.avi', '.mov', '.wav', '.flac')
-
-    # Iterate through all files in the directory
-    for file_name in os.listdir(folder_path):
-        full_file_path = os.path.join(folder_path, file_name)
-        
-        # Check if the item is a file and has a supported media extension
-        if os.path.isfile(full_file_path) and full_file_path.lower().endswith(media_extensions):
-            try:
-                # Step 1: Detect & segregate language (Sequential Processing)
-                # The loop waits here until process_file completes the move operation.
-                process_file(full_file_path)
-
-                # --- Integration Points (Optional/Future Steps) ---
-                # These steps would typically happen *after* language segregation 
-                # but *before* the file is moved, or you would process the file's 
-                # copy from the output directory.
-
-                # output_dir = os.path.join(os.getcwd(), "separated_files")
-                # os.makedirs(output_dir, exist_ok=True)
-                
-                # # Call music separation with file path and output dir
-                # # separate_music(full_file_path, output_dir)
-
-                # # Step 3: Detect AI vs Real
-                # # detect_deepfake(full_file_path)
-
-            except Exception as e:
-                print(f"❌ An error occurred while processing {file_name}: {e}")
-                
+    logging.info(f"Attempting to process single file: {file_path}")
+    try:
+        success, message = detector.process_file(file_path)
+        if success:
+            logging.info(f"Successfully processed '{file_path}'. Detected language: {message}")
         else:
-            print(f"⏭️ Skipping non-file or unsupported file: {file_name}")
+            logging.warning(f"Failed to process '{file_path}': {message}")
+    except Exception as e:
+        logging.error(f"An unexpected error occurred while processing '{file_path}': {e}")
 
-    print("\n--- Batch processing complete! All media files have been classified and moved. ---")
+def _process_folder(folder_path: str, detector: LanguageDetector):
+    """
+    Walks through a folder, identifies supported media files, and processes each.
+    """
+    logging.info(f"Starting to process folder: {folder_path}")
+    processed_count = 0
+    skipped_count = 0
+    error_count = 0
 
+    for root, _, files in os.walk(folder_path):
+        for file_name in files:
+            file_extension = os.path.splitext(file_name)[1].lower()
+            full_file_path = os.path.join(root, file_name)
+
+            if file_extension in SUPPORTED_MEDIA_EXTENSIONS:
+                logging.debug(f"Found supported media file: {full_file_path}")
+                try:
+                    success, _ = detector.process_file(full_file_path)
+                    if success:
+                        processed_count += 1
+                    else:
+                        error_count += 1
+                except Exception as e:
+                    logging.error(f"Error processing file '{full_file_path}': {e}")
+                    error_count += 1
+            else:
+                logging.debug(f"Skipping non-supported file in folder: {full_file_path}")
+                skipped_count += 1
+
+    logging.info(f"Finished processing folder '{folder_path}'. Processed: {processed_count}, Skipped: {skipped_count}, Errors: {error_count}")
+
+def main():
+    """
+    Main function to parse arguments and orchestrate file/folder processing.
+    """
+    parser = argparse.ArgumentParser(
+        description="Process media files to detect language and sort them into language-specific folders."
+    )
+    parser.add_argument(
+        "input_path", 
+        type=str,
+        help="Path to a single media file or a folder containing media files to be processed."
+    )
+    parser.add_argument(
+        "--output_dir", 
+        type=str, 
+        default="Output",
+        help="Base directory where sorted files will be saved. Subfolders for languages will be created here. Default is 'Output'."
+    )
+    parser.add_argument(
+        "--whisper_model", 
+        type=str, 
+        default="small",
+        help="Whisper model size to use for transcription (e.g., 'tiny', 'base', 'small', 'medium', 'large'). Default is 'small'."
+    )
+
+    args = parser.parse_args()
+
+    input_path = args.input_path
+    output_dir = args.output_dir
+    whisper_model = args.whisper_model
+
+    if not os.path.exists(input_path):
+        logging.error(f"Error: The specified input path '{input_path}' does not exist. Please provide a valid path.")
+        exit(1)
+
+    # Initialize the LanguageDetector once at the start of the application
+    logging.info(f"Initializing LanguageDetector with output directory: '{output_dir}' and Whisper model: '{whisper_model}'")
+    detector = LanguageDetector(output_base_dir=output_dir, whisper_model_size=whisper_model)
+    
+    # Check if the Whisper model was loaded successfully
+    if detector.model is None:
+        logging.critical("LanguageDetector could not be initialized due to Whisper model loading failure. Exiting.")
+        exit(1) # Exit if the core component (Whisper model) is not ready
+
+    if os.path.isfile(input_path):
+        logging.info(f"Input is a single file. Processing '{input_path}'.")
+        _process_single_file(input_path, detector)
+    elif os.path.isdir(input_path):
+        logging.info(f"Input is a directory. Processing contents of '{input_path}'.")
+        _process_folder(input_path, detector)
+    else:
+        logging.error(f"Error: Path '{input_path}' is neither a file nor a directory. Please check the path.")
+        exit(1)
+
+    logging.info("All processing tasks completed successfully.")
 
 if __name__ == "__main__":
-    # ⚠️ UPDATE THIS LINE to the path of your folder containing multiple files
-    folder_path_to_process = r"C:\Users\Yeshwanth\Documents\songs"
-    
-    # The main function is now called with the folder path
-    main(folder_path_to_process)
+    main()
